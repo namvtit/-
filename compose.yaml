@@ -1,0 +1,68 @@
+name: ai-video-factory
+services:
+  moneyprinter:
+    build:
+      context: vendors/MoneyPrinterTurbo
+      dockerfile: ../../deploy/moneyprinter/Dockerfile
+    command: ["sh", "-c", "python /factory/configure.py && exec python main.py"]
+    environment:
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      COVERR_API_KEY: ${COVERR_API_KEY:-}
+    volumes:
+      - ./deploy/moneyprinter/configure.py:/factory/configure.py:ro
+      - ./data/inputs:/MoneyPrinterTurbo/storage/local_videos
+      - ./data/outputs/engine:/MoneyPrinterTurbo/storage/tasks
+      - moneyprinter-cache:/MoneyPrinterTurbo/storage/cache_videos
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ping', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      start_period: 60s
+      retries: 5
+    restart: unless-stopped
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      COVERR_API_KEY: ${COVERR_API_KEY:-}
+      MONEYPRINTER_URL: http://moneyprinter:8080
+      DATA_DIR: /data
+      JOB_TIMEOUT_SECONDS: ${JOB_TIMEOUT_SECONDS:-1800}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data/inputs:/data/inputs
+      - ./data/outputs:/data/outputs
+      - ./data/jobs:/data/jobs
+    depends_on:
+      moneyprinter:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+    restart: unless-stopped
+  web:
+    build: apps/web
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+    restart: unless-stopped
+volumes:
+  moneyprinter-cache:
